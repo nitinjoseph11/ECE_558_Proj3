@@ -20,13 +20,14 @@ def ComputePyr(img, noLayers):
         downsample = REDUCE(downsample)
         gPyr.append(downsample)
     lPyr = EXPAND(gPyr)
+    gPyr.pop()
     return gPyr, lPyr
 
 def REDUCE(img):
     #refer https://docs.opencv.org/3.4/d4/d1f/tutorial_pyramids.html
     gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]])
     blur = convolveBW(img, gKernel) if len(img.shape) < 3 else convolveColor(img, gKernel) #blurring
-    return blur[::2, ::2] #taking every next pixel subsample (downsample)
+    return blur[::2, ::2] #downsample
 
 def EXPAND(gPyr):
     gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]])
@@ -34,7 +35,7 @@ def EXPAND(gPyr):
     lPyr = []
     for i in range(numLevels, 0, -1):
         gExpand = np.zeros((2*gPyr[i].shape[0], 2*gPyr[i].shape[1], gPyr[i].shape[2]))
-        gExpand[::2, ::2, :] = gPyr[i]                          #upsample smaller one (nearest neighbor)
+        gExpand[::2, ::2, :] = gPyr[i]                          #upsample
         gExpand = convolveBW(gExpand, 4*gKernel) if len(gExpand.shape) < 3 else convolveColor(gExpand, 4*gKernel)            #smoothen it
         laplacian = np.subtract(gPyr[i-1], gExpand)             #subtract from the previous gaussian pyramid
         lPyr.append(laplacian)
@@ -76,7 +77,7 @@ def blend(laplaceA, laplaceB, maskPyr):
     maskPyr = list(reversed(maskPyr))
     LS = []
     for la, lb, gm in zip(laplaceA, laplaceB, maskPyr):
-        ls = lb*gm + la*(255.0 - gm)
+        ls = la*gm + lb*(1.0 - gm)
         LS.append(ls)
     return LS
 
@@ -90,11 +91,11 @@ def reconstruct(laplacian_pyr):
         laplacian_expanded = np.zeros((2*laplacian_top.shape[0], 2*laplacian_top.shape[1], laplacian_top.shape[2]))
         laplacian_expanded[::2, ::2, :] = laplacian_top
         laplacian_top = cv.add(laplacian_pyr[i+1], laplacian_expanded)
-        laplacian_lst.append(laplacian_top)
-    return laplacian_lst  
+        #laplacian_lst.append(laplacian_top)
+    return laplacian_top  
 
 def main():
-    imgSrc = (cv.resize((cv.imread('johnnyBravoBW.png')), (512, 512)))
+    imgSrc = (cv.resize((cv.imread('greyGirl.png')), (512, 512)))
     imgTrg = (cv.resize((cv.imread('monaLisaBW.jpg')), (512, 512)))
     # sampling_rate ^ (num_layers) <= min(m,n)
     num_layers = math.log2(min(imgSrc.shape[0], imgSrc.shape[1]))
@@ -105,22 +106,20 @@ def main():
     mask = (mask.astype(int))*255
     
     gPyrSrc, lPyrSrc = ComputePyr(imgSrc, int(num_layers))
-    print(len(gPyrSrc), len(lPyrSrc))
     gPyrTrg, lPyrTrg = ComputePyr(imgTrg, int(num_layers))
     # plt.imshow(mask, interpolation='nearest')
     # plt.show()
     mask = (np.reshape(mask, (512, 512, 1))).astype('uint8')
     imshow(mask)
     mask = cv.cvtColor(mask, cv.COLOR_GRAY2BGR)
-    maskGPyr, maskLPyr = ComputePyr(mask, int(num_layers))
+    gPyrMask, lPyrMask = ComputePyr(mask, int(num_layers))
 
-    # for eachSrc, eachTrg in zip(lPyrSrc, lPyrTrg):
-    #     imshow(eachSrc)
-    #     imshow(eachTrg)
-    # add_laplace = blend(lPyrSrc, lPyrTrg, maskGPyr)
-    # final = reconstruct(add_laplace)
-
-    # imshow(final)
+    
+    
+    add_laplace = blend(lPyrSrc, lPyrTrg, gPyrMask)
+    final = reconstruct(add_laplace)
+    imshow(final)
+    
     
 if __name__=='__main__':
     main()
