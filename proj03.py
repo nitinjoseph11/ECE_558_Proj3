@@ -42,6 +42,11 @@ def EXPAND(gPyr):
         lPyr.append(laplacian)
     return lPyr
 
+def upsample(img):
+    imgUpsampled = np.zeros((2*img.shape[0], 2*img.shape[1]))
+    imgUpsampled[::2, ::2] = img
+    return imgUpsampled
+
 def padImage(img, kernel):
     paddingWidthx = paddingWidthy = top = bottom = left = right = math.ceil((kernel.shape[0] - 1)/2) #because m and n are equal for box
     paddedImg = cv.copyMakeBorder(img, top, bottom, left, right, cv.BORDER_CONSTANT, None, value = 0)
@@ -83,17 +88,13 @@ def blend(laplaceA, laplaceB, maskPyr):
     return LS
 
 def reconstruct(laplacian_pyr):
-    laplacian_top = laplacian_pyr[0]
-    laplacian_lst = [laplacian_top]
-    num_levels = len(laplacian_pyr) - 1
-    for i in range(num_levels):
-        size = (laplacian_pyr[i + 1].shape[1], laplacian_pyr[i + 1].shape[0])
-        #laplacian_expanded = cv.pyrUp(laplacian_top, dstsize=size)
-        laplacian_expanded = np.zeros((2*laplacian_top.shape[0], 2*laplacian_top.shape[1]))
-        laplacian_expanded[::2, ::2] = laplacian_top
-        laplacian_top = cv.add(laplacian_pyr[i+1], laplacian_expanded)
-        #laplacian_lst.append(laplacian_top)
-    return laplacian_top  
+    gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]])
+    laplacianTop = laplacian_pyr[0]
+    for i in range(1, len(laplacian_pyr)):
+        laplacianTop = convolveBW(laplacianTop, gKernel) if len(laplacianTop.shape) < 3 else convolveColor(laplacianTop, gKernel)
+        laplacianTop = upsample(laplacianTop)
+        laplacianTop = cv.add(laplacianTop, laplacian_pyr[i])
+    return laplacianTop  
 
 def main():
     imgSrc = (cv.resize((cv.imread('greyGirl.png')), (512, 512)))
