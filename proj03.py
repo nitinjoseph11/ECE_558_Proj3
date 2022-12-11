@@ -29,13 +29,13 @@ def REDUCE(img):
     #refer https://docs.opencv.org/3.4/d4/d1f/tutorial_pyramids.html
     #gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]], dtype='uint8')
     gKernel = Gaussian()
+    print(gKernel)
     blur = convolveBW(img, gKernel) if len(img.shape) < 3 else convolveColor(img, gKernel) #blurring
     return blur[::2, ::2] #downsample
 
 def EXPAND(gPyr):
 
     #gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]], dtype='uint8')
-    
     numLevels = len(gPyr) -1
     lPyr = []
     lPyr.append(gPyr[numLevels - 1])
@@ -153,7 +153,6 @@ def up_down(img,factor):
 
     w= math.ceil(factor*img.shape[0])
     h = math.ceil(factor*img.shape[1])
-    #print(int(x1),int(x2))
     new_img = np.zeros((w,h))
 
     for i in range(w):
@@ -163,8 +162,8 @@ def up_down(img,factor):
     return new_img
     
 def main():
-    imgSrc = (cv.resize((cv.imread('LH.png')), (512, 512)))
-    imgTrg = (cv.resize((cv.imread('MS.png')), (512, 512)))
+    imgSrc = (cv.resize((cv.imread('burger.jpg')), (512, 512)))
+    imgTrg = (cv.resize((cv.imread('turtle.jpg')), (512, 512)))
     imgSrc = cv.cvtColor(imgSrc, cv.COLOR_BGR2GRAY)
     imgTrg = cv.cvtColor(imgTrg, cv.COLOR_BGR2GRAY)
     num_layers = math.log2(min(imgSrc.shape[0], imgSrc.shape[1]))
@@ -176,6 +175,8 @@ def main():
     #print('mask.shape', mask.shape)
     gPyrSrc, lPyrSrc = ComputePyr(imgSrc, int(num_layers))
     gPyrTrg, lPyrTrg = ComputePyr(imgTrg, int(num_layers))
+    # for each in lPyrSrc:
+    #     imshow(each.astype('uint32'))
     mask = (np.reshape(mask, (512, 512))).astype('uint8')
     imshow(mask)
     gPyrMask, lPyrMask = ComputePyr(mask, int(num_layers))
@@ -183,8 +184,6 @@ def main():
     add_laplace = blend(lPyrSrc, lPyrTrg, gPyrMask)
     final = reconstruct(add_laplace, num_layers)
     imshow(final)
-    print(final.shape) 
-    
-    
+        
 if __name__=='__main__':
     main()
