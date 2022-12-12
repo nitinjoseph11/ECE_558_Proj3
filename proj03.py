@@ -6,122 +6,159 @@ from varname import nameof
 from roipoly import RoiPoly
 from matplotlib import pyplot as plt
 
+#can be varied/tuned according to desired extent of blending (sigmaFactor + const*sigmaStepSize)
+sigmaStepSize = 0.65045
+
 def imshow(img):
+
     windowName = nameof(img)
     cv.imshow(windowName,img.astype('float32'))
     k = cv.waitKey(0)
     cv.destroyAllWindows
+
     return
 
 def ComputePyr(img, noLayers):
+
     downsample = img.copy()
     gPyr = [downsample]
-    #sigma = noLayers
+    sigma = 0.7
     for i in range(noLayers):
-        downsample = REDUCE(downsample)
-        gPyr.append(downsample)
-        #sigma = sigma - 1
+        downsample = REDUCE(downsample,sigma)
+        gPyr.append(downsample.astype('uint8'))
+        sigma = sigma + sigmaStepSize
     lPyr = EXPAND(gPyr)
-    #gPyr.pop()
+
     return gPyr, lPyr
 
-def REDUCE(img):
-    #refer https://docs.opencv.org/3.4/d4/d1f/tutorial_pyramids.html
-    #gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]], dtype='uint8')
-    gKernel = Gaussian()
-    print(gKernel)
-    blur = convolveBW(img, gKernel) if len(img.shape) < 3 else convolveColor(img, gKernel) #blurring
-    return blur[::2, ::2] #downsample
+def REDUCE(img,sigma):
+
+    blur = rgb_conv(img, GaussianK(sigma), 'zero')   #blurring
+    return cv.merge((sample(blur[:,:,0], 1/2), sample(blur[:,:,1], 1/2), sample(blur[:,:,2], 1/2))) #downsample
 
 def EXPAND(gPyr):
 
-    #gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]], dtype='uint8')
     numLevels = len(gPyr) -1
     lPyr = []
     lPyr.append(gPyr[numLevels - 1])
-    #sigma = 1
+    #sigma must be tuned according to the resolution needed
+    sigma =  0.475 + (numLevels + 1)*sigmaStepSize
+
     for i in range(numLevels - 1, 0, -1):
-        gExpand = np.zeros((2*gPyr[i].shape[0], 2*gPyr[i].shape[1]))
-        gExpand[::2, ::2] = gPyr[i]                          #upsample
-        gKernel = Gaussian()
-        gExpand = convolveBW(gExpand, gKernel) if len(gExpand.shape) < 3 else convolveColor(gExpand, gKernel)            #smoothen it
-        laplacian = gPyr[i-1] - gExpand             #subtract from the previous gaussian pyramid
+
+        #temp=gPyr[i]                       #upsample
+        gExpand = cv.merge((sample(gPyr[i][:,:,0], 2),sample( gPyr[i][:,:,1], 2),sample( gPyr[i][:,:,2], 2)))
+        gExpand = rgb_conv(gExpand, GaussianK(sigma), 'zero')
+        laplacian = gPyr[i-1] - gExpand             
         lPyr.append(laplacian)
-        #sigma = sigma + 1
+        sigma = sigma - sigmaStepSize
+
     return lPyr
 
-def upsample(img):
-    imgUpsampled = np.zeros((2*img.shape[0], 2*img.shape[1]))
-    imgUpsampled[::2, ::2] = img
-    return imgUpsampled
+def conv2(image,kernel,type):
 
-def padImage(img, kernel):
-    paddingWidthx = paddingWidthy = top = bottom = left = right = math.ceil((kernel.shape[0] - 1)/2) #because m and n are equal for box
-    paddedImg = cv.copyMakeBorder(img, top, bottom, left, right, cv.BORDER_CONSTANT, None, value = 0)
-    return paddedImg, paddingWidthx, paddingWidthy
+    i_m=image.shape[0] #rows
+    i_n=image.shape[1] #columns
 
-def conv2d(f,w):
-    fp, padWidthx, padWidthy = padImage(f,w)
-    convolvedOutput = np.zeros((fp.shape[0] - 2*padWidthx,fp.shape[1] - 2*padWidthy),dtype="float32")
-    for row in np.arange(padWidthx, fp.shape[0] - padWidthx):
-        for col in np.arange(padWidthy, fp.shape[1] - padWidthy):
-            roi = fp[row-padWidthx:row+padWidthx+1, col-padWidthy:col+padWidthy+1] 
-            conv = np.sum(np.multiply(roi,w))
-            convolvedOutput[row - padWidthx, col - padWidthy] = conv
-    convolvedOutput = rescale_intensity(convolvedOutput,in_range =(0,255))
-    convolvedOutput = (convolvedOutput*255).astype("uint8")
-    return convolvedOutput
+    k_m=kernel.shape[0] #rows
+    k_n=kernel.shape[1] #columns
+    pad_h=(k_m-1)//2  
+    
+    pad_w=(k_n-1)//2
 
-def convolveColor(f,w):
-    try:
-        fB, fG,fR = f[:,:,0], f[:,:,1], f[:,:,2]
-        convB = conv2d(fB,w)
-        convG = conv2d(fG,w)
-        convR = conv2d(fR,w)
-        return np.dstack((convB,convG,convR))
-    except:
-        conv = conv2d(f, w)
-        return conv
+    
+    if type=='zero':
 
-def convolveBW(f,w):
-    convBW = conv2d(f,w)
-    return convBW
+       out_image=np.zeros(shape=(image.shape[0]+pad_h*2,image.shape[1]+pad_w*2))
+       #print(out_image.shape)
+       out_image[pad_h:i_m+pad_h,pad_w:i_n+pad_w] =np.copy(image)
+    
+    #change wrap padding corner
+    if type=='wrap':
+        out_image=np.zeros(shape=(image.shape[0]+pad_h*2,image.shape[1]+pad_w*2))
+        out_image[0:pad_h,pad_w:i_n+pad_w]=image[i_m-pad_h:i_m,0:i_n]
+        out_image[i_m+pad_h:out_image.shape[0],pad_w:i_n+pad_w]=image[0:pad_h,0:i_n]
+        out_image[pad_h:i_m+pad_h,0:pad_w]=image[0:i_m,i_n-pad_w:i_n]
+        out_image[pad_h:i_m+pad_h,i_n+pad_w:out_image.shape[1]]=image[0:i_m,0:pad_w]
+        out_image[pad_h:i_m+pad_h,pad_w:i_n+pad_w] =np.copy(image)
+        out_image[0,0]=np.copy(image[i_m-1,i_n-1])   #upper left corner
+        out_image[i_m+pad_h,0]=np.copy(image[0,i_n-1]) #lower left corner
+        out_image[0,i_n+pad_w]=np.copy(image[i_m-1,0]) #upper right corner
+        out_image[i_m+pad_h:out_image.shape[0],i_n+pad_w:out_image.shape[1]]=np.copy(image[0:pad_h,0:pad_w]) #lower right corner
+    
+    if type=='copy':
+        out_image=np.zeros(shape=(image.shape[0]+pad_h*2,image.shape[1]+pad_w*2))
+        out_image[pad_h:i_m+pad_h,0:pad_w]=image[0:i_m,0:pad_w]
+        out_image[pad_h:i_m+pad_h,i_n+pad_w:out_image.shape[1]]=image[0:i_m,i_n-pad_w:i_n]
+        out_image[0:pad_h,pad_w:i_n+pad_w]=image[0:pad_h,0:i_n]
+        out_image[i_m+pad_h:out_image.shape[0],pad_w:out_image.shape[1]-pad_w]=image[i_m-pad_h:i_m,0:i_n]
+        out_image[pad_h:i_m+pad_h,pad_w:i_n+pad_w]=np.copy(image)
+        out_image[0:pad_h,0:pad_w]=np.copy(image[0:pad_h,0:pad_w])   #upper left corner
+        out_image[i_m+pad_h:out_image.shape[0],0:pad_w]=np.copy(image[i_m-pad_h:i_m,0:pad_w]) #lower left corner
+        out_image[0:pad_h,i_n+pad_w:out_image.shape[1]]=np.copy(image[0:pad_h,0:pad_w]) #upper right corner
+        out_image[i_m+pad_h:out_image.shape[0],i_n+pad_w:out_image.shape[1]]=np.copy(image[i_m-pad_h:i_m,i_n-pad_w:i_n]) #lower right corner
 
+    if type=='reflect':
+        out_image=np.zeros(shape=(image.shape[0]+pad_h*2,image.shape[1]+pad_w*2))
+        out_image[pad_h:i_m+pad_h,0:pad_w]=np.flip(image[0:i_m,0:pad_w],0)
+        out_image[pad_h:i_m+pad_h,i_n+pad_w:out_image.shape[1]]=np.flip(image[0:i_m,i_n-pad_w:i_n],0)
+        out_image[0:pad_h,pad_w:i_n+pad_w]=np.flip(image[0:pad_h,0:i_n],0)
+        out_image[i_m+pad_h:out_image.shape[0],pad_w:out_image.shape[1]-pad_w]=np.flip(image[i_m-pad_h:i_m,0:i_n],0)
+        out_image[0,0]=np.copy(image[0+pad_h,0+pad_w]) #upper left corner
+        out_image[out_image.shape[0]-1,0]=np.copy(image[i_m-pad_h,i_n-pad_w])#lower left corner
+        out_image[0,out_image.shape[1]-1]=np.copy(image[0+pad_h,i_n-pad_w]) #upper right corner
+        out_image[out_image.shape[0]-1,out_image.shape[1]-1]=np.copy(image[i_m-pad_h,i_n-pad_w])#lower right corner
+        out_image[pad_h:i_m+pad_h,pad_w:i_n+pad_w] =np.copy(image)
+
+    output_conv=np.zeros((i_m,i_n), dtype="uint8")
+
+    for i in range(pad_h,i_m + pad_h):
+        for j in range(pad_w,i_n+pad_w):
+
+          roi =(out_image[i-pad_w:i+pad_w+1,j-pad_w:j+pad_w+1])*kernel
+          k=roi.sum()
+          output_conv[i-pad_w,j-pad_w]=k
+
+    return output_conv
+
+def rgb_conv(img,kernel,type):
+
+    temp=np.zeros((img.shape[0],img.shape[1],3))
+    temp[:,:,0]=conv2(img[:,:,0],kernel,type)
+    temp[:,:,1]=conv2(img[:,:,1],kernel,type)
+    temp[:,:,2]=conv2(img[:,:,2],kernel,type)
+
+    return temp
+    
 def blend(laplaceA, laplaceB, maskPyr):
 
     maskPyr.pop()
-    maskPyr = normalize(maskPyr)
     maskPyr = list(reversed(maskPyr))
     LS = []
+
     for la, lb, gm in zip(laplaceA, laplaceB, maskPyr):
-        ls = cv.add(la*gm, lb*(1.0 - gm))
+        
+        ls = la*gm + lb*(1.0 - gm)
         LS.append(ls)
+
     return LS
 
 def reconstruct(laplacian_pyr, num_layers):
-    #gKernel = (1.0/256)*np.array([[1, 4, 6, 4, 1],[4, 16, 24, 16, 4],[6, 24, 36, 24, 6], [4, 16, 24, 16, 4],[1, 4, 6, 4, 1]])
+    #taking blended laplacian and reconstructing the original image
+    
     laplacianTop = laplacian_pyr[0]
-    #sigma = 1
+    sigma =  0.475 + (num_layers + 1)*sigmaStepSize
+
     for i in range(1, int(num_layers)):
-        laplacianTop = upsample(laplacianTop)
-        gKernel = Gaussian()
-        laplacianTop = convolveBW(laplacianTop, gKernel) if len(laplacianTop.shape) < 3 else convolveColor(laplacianTop, gKernel)
+
+        laplacianTop = cv.merge((sample(laplacianTop[:,:,0], 2), sample(laplacianTop[:,:,1], 2), sample(laplacianTop[:,:,2], 2)))
+        laplacianTop = rgb_conv(laplacianTop, GaussianK(sigma), 'zero')
         laplacianTop = laplacianTop + laplacian_pyr[i]
-        #sigma = sigma + 1
+        sigma = sigma - sigmaStepSize
+
     laplacianTop = rescale_intensity(laplacianTop, in_range=(0,255))
+    
     return laplacianTop  
-
-def normalize(pyrArray):
-    returnList = list()
-    for each in pyrArray:
-        each = np.asarray(each)
-        each = each/255.0
-        returnList.append(each)
-    return returnList
-
-def returnShape(list):
-    for each in list:
-        print(each.shape)
 
 def GaussianK(sigma):
     
@@ -138,18 +175,8 @@ def GaussianK(sigma):
     
     return gaussian_filter
 
-def Gaussian(shape=(5,5),sigma=1):
-
-    m,n = [(ss-1.)/2. for ss in shape]
-    y,x = np.ogrid[-m:m+1,-n:n+1]
-    h = np.exp( -(x*x + y*y) / (2.*sigma*sigma) )
-    h[ h < np.finfo(h.dtype).eps*h.max() ] = 0
-    sumh = h.sum()
-    if sumh != 0:
-        h /= sumh
-    return h
-
-def up_down(img,factor):
+#sampling up/down controlled by factor ( use n for upsampling and 1/n for downsampling)
+def sample(img,factor):
 
     w= math.ceil(factor*img.shape[0])
     h = math.ceil(factor*img.shape[1])
@@ -159,31 +186,48 @@ def up_down(img,factor):
         for j in range(h):
             temp = img[math.floor(i/factor),math.floor(j/factor)]
             new_img[i][j] = temp
+
     return new_img
-    
+
+def reshape(img):
+
+    imgReshaped = np.zeros((img.shape[0], img.shape[1], 3))
+    imgReshaped[:, :, 0] = img
+    imgReshaped[:, :, 1] = img
+    imgReshaped[:, :, 2] = img
+
+    return imgReshaped
+
 def main():
-    imgSrc = (cv.resize((cv.imread('burger.jpg')), (512, 512)))
-    imgTrg = (cv.resize((cv.imread('turtle.jpg')), (512, 512)))
-    imgSrc = cv.cvtColor(imgSrc, cv.COLOR_BGR2GRAY)
-    imgTrg = cv.cvtColor(imgTrg, cv.COLOR_BGR2GRAY)
-    num_layers = math.log2(min(imgSrc.shape[0], imgSrc.shape[1]))
+
+    imgSrc = (cv.resize((np.uint8(cv.imread('coentrao.png'))), (512, 512)))
+    imgTrg = (cv.resize((np.uint8(cv.imread('cristianoReal.png'))), (512, 512)))
+    
+    cv.imwrite('imgA.png', imgSrc)
+    cv.imwrite('imgB.png', imgTrg)
+    
+    
+    max_layers = math.log2(min(imgSrc.shape[0], imgSrc.shape[1]))
+    inputNumLayers = int(input("Enter desired level of pyramids: "))
+    while(max_layers < inputNumLayers):
+        prompt = "Invalid input. Enter less than {max_num} :".format(max_num = max_layers)
+        inputNumLayers = int(input(prompt))
+
+    #to get region of interest1
     plt.imshow(imgSrc)
     roi = RoiPoly(color='r')
     roi.display_roi()
-    mask = (roi.get_mask(imgSrc[:,:]))
-    mask = (mask.astype(int))*255
-    #print('mask.shape', mask.shape)
-    gPyrSrc, lPyrSrc = ComputePyr(imgSrc, int(num_layers))
-    gPyrTrg, lPyrTrg = ComputePyr(imgTrg, int(num_layers))
-    # for each in lPyrSrc:
-    #     imshow(each.astype('uint32'))
-    mask = (np.reshape(mask, (512, 512))).astype('uint8')
+    mask = (roi.get_mask(imgSrc[ :, :, 0]))
+    mask = reshape(mask)
     imshow(mask)
-    gPyrMask, lPyrMask = ComputePyr(mask, int(num_layers))
+
+    gPyrSrc, lPyrSrc = ComputePyr(imgSrc, int(inputNumLayers))
+    gPyrTrg, lPyrTrg = ComputePyr(imgTrg, int(inputNumLayers))
+    gPyrMask, lPyrMask = ComputePyr(mask, int(inputNumLayers))
 
     add_laplace = blend(lPyrSrc, lPyrTrg, gPyrMask)
-    final = reconstruct(add_laplace, num_layers)
-    imshow(final)
-        
+    final = reconstruct(add_laplace, inputNumLayers)
+    imshow(final.astype('float32'))
+
 if __name__=='__main__':
     main()
